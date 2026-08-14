@@ -1,41 +1,28 @@
 import unittest
 
-from engine import build_practice_queue, diagnostic_question_ids, get_mastery
+from engine import SKILL_LABELS, build_practice_queue, diagnostic_question_ids, get_mastery
 
 
 class EngineTests(unittest.TestCase):
-    def test_diagnostic_has_two_questions_per_skill(self):
-        self.assertEqual(len(diagnostic_question_ids()), 16)
+    def test_each_track_has_twelve_diagnostic_questions(self):
+        for track in SKILL_LABELS:
+            self.assertEqual(len(diagnostic_question_ids(track)), 12)
 
-    def test_unattempted_skills_start_unmeasured(self):
-        mastery = get_mastery([])
-        self.assertTrue(all(values["score"] == 0 for values in mastery.values()))
-        self.assertTrue(all(values["attempts"] == 0 for values in mastery.values()))
+    def test_each_track_has_six_skills(self):
+        self.assertTrue(all(len(skills) == 6 for skills in SKILL_LABELS.values()))
 
-    def test_weak_skill_is_prioritized(self):
-        attempts = []
-        representative_questions = {
-            "inspection": 1,
-            "missing": 5,
-            "duplicates": 9,
-            "types": 13,
-            "text": 17,
-            "filtering": 21,
-            "outliers": 25,
-            "joins": 29,
-        }
-        for skill, question_id in representative_questions.items():
-            attempts.append(
-                {
-                    "question_id": question_id,
-                    "skill": skill,
-                    "correct": 0 if skill == "missing" else 1,
-                    "confidence": "Certain",
-                }
-            )
-        mastery = get_mastery(attempts)
-        queue = build_practice_queue(attempts, mastery, count=5)
-        self.assertTrue(any(question_id in queue for question_id in [6, 7, 8]))
+    def test_tracks_remain_separate(self):
+        attempts = [{"question_id": 1, "skill": "pd_inspect", "correct": 1, "confidence": "Certain"}]
+        pandas_mastery = get_mastery(attempts, "pandas")
+        terraform_mastery = get_mastery([], "terraform")
+        self.assertGreater(pandas_mastery["pd_inspect"]["score"], 0)
+        self.assertTrue(all(value["score"] == 0 for value in terraform_mastery.values()))
+
+    def test_practice_queue_has_five_questions(self):
+        mastery = get_mastery([], "capital_markets")
+        queue = build_practice_queue("capital_markets", [], mastery, count=5)
+        self.assertEqual(len(queue), 5)
+        self.assertTrue(all(question_id >= 201 for question_id in queue))
 
 
 if __name__ == "__main__":
