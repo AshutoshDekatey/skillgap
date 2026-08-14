@@ -1,43 +1,62 @@
-# SkillGap — Personalized Learning V2
+# SkillGap — Personalized Learning V3
 
-SkillGap is a multi-user Streamlit beta that diagnoses topic-level weaknesses and builds a focused practice session for each learner.
+SkillGap V3 is a three-user Streamlit learning system with diagnostic-led adaptive practice.
 
-## V2 learning paths
+## Accounts and learning paths
 
-| Learner | Password | Learning path |
-|---|---|---|
-| Ashutosh | `Ashutosh` | Pandas & Data Cleaning |
-| Aakash | `Aakash` | Terraform Foundations |
-| Neeraj | `Neeraj` | Capital Markets |
+| Learner | Demo password | V3 learning path | Questions |
+|---|---|---|---:|
+| Ashutosh | `Ashutosh` | SQL, Pandas and Python Data Analysis | 100 |
+| Aakash | `Aakash` | Terraform, Microservices and SDLC | 100 |
+| Neeraj | `Neeraj` | Capital Markets, Payments and Private Equity | 100 |
 
-These are demonstration credentials. Replace them with proper authentication before allowing untrusted public access.
+The passwords are intentionally simple demonstration credentials. Use a real authentication provider before opening the app to untrusted users.
 
-## What changed from V1
+## V3 behavior
 
-- Separate subject, skill map and question bank for each learner
-- 54 readable questions: 18 per learning path
-- 12-question diagnostic for every path
-- Minimal white, blue and violet interface
-- Animated mastery bars
-- Clickable five-question recommended session on the dashboard
-- Immediate before/after readiness recalculation when practice is completed
-- CSV Lab removed
-- Track-aware SQLite persistence prevents subjects from affecting one another
-- No external API key required
+- 300 total questions
+- 10 measurable skills and 100 questions per learner
+- 20-question diagnostic for each learner
+- Recommended 10-question practice sessions
+- Weak skills from the diagnostic are ranked first
+- Every incorrectly answered question remains eligible and is promoted in later sessions
+- Once a question is answered correctly, it never appears again for that learner
+- Every answer has a concise explanation
+- Separate progress, question history and mastery for each account
+- Blue-violet animated mastery dashboard
+- V3 starts with a new database file, so all three accounts begin fresh
 
-## Project structure
+## Question-bank design
+
+Each learning path contains 10 skills. Every skill has five curated concept cards. Each concept produces:
+
+1. A definition-selection question
+2. A concept-recognition question
+
+This produces 10 questions per skill and 100 per learner. Options are deterministically shuffled, so they remain stable across deployments.
+
+## Adaptive selection
+
+After the 20-question diagnostic, the engine calculates mastery for each skill using unique questions attempted and resolved. The next session excludes every question ever answered correctly, then ranks the remaining questions by:
+
+1. Low skill mastery
+2. Whether the question is an unresolved wrong answer
+3. Number of previous attempts
+4. Difficulty
+
+Wrong answers receive a strong retry priority. Once the learner answers that question correctly, it is permanently retired.
+
+## Fresh V3 data
+
+V3 writes to:
 
 ```text
-skillgap-v2/
-├── app.py
-├── engine.py
-├── questions.py
-├── storage.py
-├── requirements.txt
-├── tests/
-│   └── test_engine.py
-└── README.md
+.data/skillgap_v3.db
 ```
+
+This is intentionally different from the V1/V2 database filename. Existing histories therefore do not carry into V3.
+
+Do not commit the `.data` directory. The included `.gitignore` already excludes it.
 
 ## Run locally
 
@@ -61,59 +80,50 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Run the included tests:
+Run tests:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-## Replace V1 in an existing GitHub repository
+## Create V3 on GitHub
 
-1. Download and extract `skillgap-v2.zip`.
-2. In your GitHub repository, delete the old application files: `app.py`, `engine.py`, `questions.py`, `storage.py`, `requirements.txt`, and the old `tests` folder.
-3. Upload the extracted V2 files and folders into the repository root.
-4. Do **not** upload `.data/progress.db`, `.venv`, `__pycache__`, or `.streamlit/secrets.toml`.
-5. Commit directly to your intended branch, or create a V2 branch first if you want V1 preserved.
+1. Keep the existing V1 and V2 releases/tags unchanged.
+2. Create a branch named `v3` from `main`.
+3. Extract `skillgap-v3.zip`.
+4. Replace the application files in the repository root with the extracted V3 files.
+5. Do not upload `.data`, `.venv`, `__pycache__`, or `.streamlit/secrets.toml`.
+6. Commit the files to the `v3` branch.
+7. Create a temporary Streamlit deployment pointed at the `v3` branch and `app.py`.
+8. Test the diagnostic and practice flow using all three accounts.
+9. Merge `v3` into `main` after verification.
+10. Create a GitHub release tagged `v3.0.0`.
 
-Recommended preservation workflow:
+## Existing Streamlit deployment
 
-1. On the repository's **Releases** page, confirm the V1 release/tag exists.
-2. Create a branch named `v2` from `main`.
-3. Replace the files on the `v2` branch and test the deployment.
-4. Merge `v2` into `main` after verification.
-5. Create a GitHub release tagged `v2.0.0`.
+If the app is already connected to the repository's `main` branch, merging V3 into `main` should trigger redeployment. Confirm in **Manage app** that:
 
-## Deploy with Streamlit Community Cloud
+- Repository is correct
+- Branch is `main`
+- Main file path is `app.py`
 
-### Existing app
+Reboot the app if it does not pick up the new commit.
 
-If the Streamlit app already points to this repository and `app.py`, a push to its configured branch normally triggers a redeploy automatically.
+## Persistence and concurrency
 
-1. Open the app in Streamlit Community Cloud.
-2. Open **Manage app** and confirm the repository, branch, and entry point are correct.
-3. The entry point must be `app.py`.
-4. Reboot the app if the new commit is not picked up automatically.
-5. Sign in once as each user and confirm that the displayed path is correct.
+SQLite with WAL mode and a 15-second connection timeout is adequate for this controlled three-user beta. Hosting-local files should not be treated as durable production storage. For persistent public use, move `users` and `attempts` to PostgreSQL, Supabase, Neon or AWS RDS.
 
-### New V2 test deployment
+## Files
 
-1. Open Streamlit Community Cloud and select **Create app**.
-2. Choose the GitHub repository.
-3. Choose the `v2` branch.
-4. Set the main file path to `app.py`.
-5. Deploy and test all three accounts.
-
-## Persistence limitation
-
-The app stores progress in SQLite. On Streamlit Community Cloud, local files can be reset during restart or redeployment. For durable public progress, move the `users` and `attempts` tables to PostgreSQL, Supabase, Neon, or another persistent database.
-
-## How the recommended session works
-
-The engine ranks questions using:
-
-1. Current mastery of the tagged skill
-2. Whether the learner has already seen the question
-3. Whether the question belongs to the diagnostic
-4. Question difficulty
-
-It selects five questions, records each answer, then recalculates the dashboard. A score can rise or be recalibrated downward depending on performance; it is not increased artificially for completion alone.
+```text
+skillgap-v3/
+├── app.py
+├── engine.py
+├── questions.py
+├── storage.py
+├── CONTENT_SOURCES.md
+├── requirements.txt
+├── tests/
+│   └── test_engine.py
+└── README.md
+```

@@ -14,42 +14,45 @@ def get_question(question_id: int) -> dict:
 
 
 def diagnostic_question_ids(track: str) -> list[int]:
-    """Select the first two questions for every skill in a learner's track."""
-    selected: list[int] = []
-    counts: defaultdict[str, int] = defaultdict(int)
-    for question in questions_for_track(track):
-        skill = question["skill"]
-        if counts[skill] < 2:
-            selected.append(question["id"])
-            counts[skill] += 1
-    return selected
+    return [q["id"] for q in questions_for_track(track) if q["diagnostic"]]
+
+
+def question_statuses(attempts: list[dict]) -> dict[int, dict[str, int | bool]]:
+    """Summarize whether each attempted question is resolved and how often it was missed."""
+    statuses: defaultdict[int, dict[str, int | bool]] = defaultdict(
+        lambda: {"attempts": 0, "wrong": 0, "correct": False}
+    )
+    for attempt in attempts:
+        status = statuses[attempt["question_id"]]
+        status["attempts"] = int(status["attempts"]) + 1
+        if attempt["correct"]:
+            status["correct"] = True
+        else:
+            status["wrong"] = int(status["wrong"]) + 1
+    return dict(statuses)
 
 
 def get_mastery(attempts: list[dict], track: str) -> dict[str, dict[str, float | int]]:
-    grouped: defaultdict[str, list[dict]] = defaultdict(list)
-    for attempt in attempts:
-        grouped[attempt["skill"]].append(attempt)
-
-    confidence_weight = {"Guessing": 0.85, "Unsure": 0.95, "Fairly sure": 1.0, "Certain": 1.08}
+    """Estimate skill mastery from unique questions, so repeated misses do not distort the denominator."""
+    statuses = question_statuses(attempts)
     mastery: dict[str, dict[str, float | int]] = {}
     for skill in SKILL_LABELS[track]:
-        skill_attempts = grouped[skill]
-        if not skill_attempts:
-            mastery[skill] = {"score": 0.0, "attempts": 0}
-            continue
-
-        earned = 0.0
-        possible = 0.0
-        for attempt in skill_attempts:
-            weight = confidence_weight.get(attempt["confidence"], 1.0)
-            possible += weight
-            if attempt["correct"]:
-                earned += weight
-            elif attempt["confidence"] == "Guessing":
-                earned += 0.08
-
-        score = ((earned + 0.5) / (possible + 1.0)) * 100
-        mastery[skill] = {"score": round(score, 1), "attempts": len(skill_attempts)}
+        skill_questions = [q for q in questions_for_track(track) if q["skill"] == skill]
+        attempted_ids = [q["id"] for q in skill_questions if q["id"] in statuses]
+        correct_ids = [qid for qid in attempted_ids if bool(statuses[qid]["correct"])]
+        unresolved = [qid for qid in attempted_ids if not bool(statuses[qid]["correct"])]
+        if not attempted_ids:
+            score = 0.0
+        else:
+            # Neutral prior prevents a single answer from displaying an extreme 0% or 100%.
+            score = ((len(correct_ids) + 0.5) / (len(attempted_ids) + 1.0)) * 100
+        mastery[skill] = {
+            "score": round(score, 1),
+            "attempted": len(attempted_ids),
+            "correct": len(correct_ids),
+            "unresolved": len(unresolved),
+            "total": len(skill_questions),
+        }
     return mastery
 
 
@@ -57,33 +60,58 @@ def build_practice_queue(
     track: str,
     attempts: list[dict],
     mastery: dict[str, dict[str, float | int]],
-    count: int = 5,
+    count: int = 10,
 ) -> list[int]:
-    attempt_count: defaultdict[int, int] = defaultdict(int)
-    for attempt in attempts:
-        attempt_count[attempt["question_id"]] += 1
+    """
+    Select weak-skill questions, returning unresolved wrong answers but permanently
+    excluding any question that has ever been answered correctly.
+    """
+    statuses = question_statuses(attempts)
+    eligible = [
+        q for q in questions_for_track(track)
+        if not bool(statuses.get(q["id"], {}).get("correct", False))
+    ]
 
-    def priority(question: dict) -> tuple[float, int, int]:
-        score = float(mastery[question["skill"]]["score"])
-        seen = attempt_count[question["id"]]
-        diagnostic_penalty = 8 if question.get("diagnostic") else 0
-        return (score + seen * 18 + diagnostic_penalty, seen, question["difficulty"])
+    def priority(question: dict) -> tuple[float, int, int, int]:
+        status = statuses.get(question["id"], {"attempts": 0, "wrong": 0})
+        attempts_count = int(status["attempts"])
+        wrong_count = int(status["wrong"])
+        skill_score = float(mastery[question["skill"]]["score"])
+        # Unresolved misses are deliberately brought back. Weak skills still
+        # dominate the ordering, while repeated exposure prevents starvation.
+        return (
+            skill_score - min(wrong_count, 3) * 24 + attempts_count * 4,
+            0 if wrong_count else 1,
+            attempts_count,
+            question["difficulty"],
+        )
 
-    return [q["id"] for q in sorted(questions_for_track(track), key=priority)[:count]]
+    return [q["id"] for q in sorted(eligible, key=priority)[:count]]
 
 
 def readiness_summary(mastery: dict[str, dict[str, float | int]]) -> dict:
-    measured = [values for values in mastery.values() if values["attempts"] > 0]
+    measured = [value for value in mastery.values() if int(value["attempted"]) > 0]
     readiness = round(sum(float(v["score"]) for v in measured) / len(measured)) if measured else 0
     strongest = max(mastery, key=lambda skill: float(mastery[skill]["score"]))
     weakest = min(
         mastery,
-        key=lambda skill: (float(mastery[skill]["score"]), int(mastery[skill]["attempts"])),
+        key=lambda skill: (float(mastery[skill]["score"]), -int(mastery[skill]["unresolved"])),
     )
-    return {"readiness": readiness, "strongest": strongest, "weakest": weakest}
+    completed = sum(int(value["correct"]) for value in mastery.values())
+    unresolved = sum(int(value["unresolved"]) for value in mastery.values())
+    total = sum(int(value["total"]) for value in mastery.values())
+    return {
+        "readiness": readiness,
+        "strongest": strongest,
+        "weakest": weakest,
+        "completed": completed,
+        "unresolved": unresolved,
+        "total": total,
+    }
 
 
 __all__ = [
     "SKILL_LABELS", "TRACK_LABELS", "build_practice_queue", "diagnostic_question_ids",
-    "get_mastery", "get_question", "questions_for_track", "readiness_summary",
+    "get_mastery", "get_question", "question_statuses", "questions_for_track",
+    "readiness_summary",
 ]

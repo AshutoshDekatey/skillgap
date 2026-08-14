@@ -19,11 +19,11 @@ from storage import create_or_get_user, get_attempted_question_ids, get_attempts
 
 
 APP_DIR = Path(__file__).parent
-DB_PATH = APP_DIR / ".data" / "progress.db"
+DB_PATH = APP_DIR / ".data" / "skillgap_v3.db"
 DEMO_USERS = {
-    "Ashutosh": {"password": "Ashutosh", "track": "pandas"},
-    "Aakash": {"password": "Aakash", "track": "terraform"},
-    "Neeraj": {"password": "Neeraj", "track": "capital_markets"},
+    "Ashutosh": {"password": "Ashutosh", "track": "data"},
+    "Aakash": {"password": "Aakash", "track": "engineering"},
+    "Neeraj": {"password": "Neeraj", "track": "finance"},
 }
 
 st.set_page_config(page_title="SkillGap", page_icon="✦", layout="wide", initial_sidebar_state="expanded")
@@ -96,7 +96,8 @@ def begin_practice() -> None:
     track = st.session_state.track
     attempts = get_attempts(DB_PATH, st.session_state.user_id, track)
     mastery = get_mastery(attempts, track)
-    st.session_state.practice_queue = build_practice_queue(track, attempts, mastery, count=5)
+    st.session_state.practice_queue = build_practice_queue(track, attempts, mastery, count=10)
+    st.session_state.session_total = len(st.session_state.practice_queue)
     st.session_state.practice_index = 0
     st.session_state.practice_correct = 0
     st.session_state.readiness_before = readiness_summary(mastery)["readiness"]
@@ -151,7 +152,7 @@ def render_question(question: dict, mode: str) -> None:
 def diagnostic_page() -> None:
     track = st.session_state.track
     st.title("Diagnostic")
-    st.caption(f"12 readable questions across the six skills in {TRACK_LABELS[track]}.")
+    st.caption(f"20 questions across the ten skills in {TRACK_LABELS[track]}.")
     question_ids = diagnostic_question_ids(track)
     attempted = get_attempted_question_ids(DB_PATH, st.session_state.user_id, track, "diagnostic")
     remaining = [qid for qid in question_ids if qid not in attempted]
@@ -176,7 +177,7 @@ def skill_map_html(mastery: dict, track: str) -> str:
         rows.append(
             f"""<div class="skill-row"><div class="skill-head">
             <span>{html.escape(SKILL_LABELS[track][skill])}</span>
-            <span class="skill-score">{score:.0f}% · {values['attempts']} attempts</span></div>
+            <span class="skill-score">{score:.0f}% · {values['correct']}/{values['total']} mastered</span></div>
             <div class="bar-track"><div class="bar-fill" style="--score:{score}%"></div></div></div>"""
         )
     return '<div class="map-shell"><div class="eyebrow">MASTERY BY SKILL</div><br>' + "".join(rows) + "</div>"
@@ -193,7 +194,7 @@ def dashboard_page() -> None:
     st.caption(TRACK_LABELS[track])
     metrics = [
         ("Readiness index", f"{summary['readiness']}%"),
-        ("Questions answered", str(len(attempts))),
+        ("Questions mastered", f"{summary['completed']}/{summary['total']}"),
         ("Strongest", labels[summary["strongest"]]),
         ("Focus next", labels[summary["weakest"]]),
     ]
@@ -206,12 +207,22 @@ def dashboard_page() -> None:
     st.markdown(
         f"""<div class="practice-card"><div class="eyebrow" style="color:#d9dcff">RECOMMENDED SESSION</div>
         <h3>Strengthen {html.escape(focus)}</h3>
-        <p>Five questions selected from your weakest and least-tested areas. Your skill map recalculates when the session is complete.</p></div>""",
+        <p>Ten questions selected from weak areas. Wrong answers return in later sessions; correctly answered questions retire permanently.</p></div>""",
         unsafe_allow_html=True,
     )
-    if st.button("Start recommended practice →", type="primary", use_container_width=True):
-        begin_practice()
-        st.rerun()
+    diagnostic_done = len(get_attempted_question_ids(DB_PATH, st.session_state.user_id, track, "diagnostic")) == len(diagnostic_question_ids(track))
+    if diagnostic_done:
+        if summary["completed"] >= summary["total"]:
+            st.success("All 100 questions have been mastered.")
+        elif st.button("Start recommended practice →", type="primary", use_container_width=True):
+            begin_practice()
+            st.rerun()
+    else:
+        st.warning("Complete the diagnostic before starting personalized practice.")
+        if st.button("Continue diagnostic →", type="primary", use_container_width=True):
+            st.session_state.page = "Diagnostic"
+            clear_question_state()
+            st.rerun()
     st.caption("The readiness index is a learning-progress indicator, not a certification or employment score.")
 
 
@@ -229,14 +240,14 @@ def practice_page() -> None:
         new_score = readiness_summary(get_mastery(attempts, st.session_state.track))["readiness"]
         old_score = st.session_state.readiness_before
         delta = new_score - old_score
-        st.success(f"Session complete: {st.session_state.practice_correct}/5 correct.")
+        st.success(f"Session complete: {st.session_state.practice_correct}/{st.session_state.session_total} correct.")
         a, b, c = st.columns(3)
         a.metric("Before", f"{old_score}%")
         b.metric("Now", f"{new_score}%")
         c.metric("Change", f"{delta:+d} points")
-        st.write("Your dashboard has been recalculated using these five new attempts.")
+        st.write("Your dashboard has been recalculated using this practice session.")
         if st.button("See updated skill map", type="primary", use_container_width=True):
-            for key in ["practice_queue", "practice_index", "practice_correct", "readiness_before", "session_complete"]:
+            for key in ["practice_queue", "practice_index", "practice_correct", "readiness_before", "session_complete", "session_total"]:
                 st.session_state.pop(key, None)
             st.session_state.page = "Dashboard"
             st.rerun()
@@ -253,7 +264,7 @@ def login_page() -> None:
     left, right = st.columns([1.25, 1])
     with left:
         st.subheader("Three people. Three learning paths.")
-        st.markdown("**Ashutosh** · Pandas & Data Cleaning  \n**Aakash** · Terraform Foundations  \n**Neeraj** · Capital Markets")
+        st.markdown("**Ashutosh** · SQL, Pandas & Python Data Analysis  \n**Aakash** · Terraform, Microservices & SDLC  \n**Neeraj** · Capital Markets, Payments & Private Equity")
         st.write("Each learner receives an independent diagnostic, mastery map and recommended practice queue.")
     with right:
         with st.form("login"):
