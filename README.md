@@ -1,44 +1,41 @@
-# Pandas GapMap — V1
+# SkillGap — Personalized Learning V2
 
-A personalized Streamlit learning beta focused on practical Pandas data cleaning.
+SkillGap is a multi-user Streamlit beta that diagnoses topic-level weaknesses and builds a focused practice session for each learner.
 
-## What V1 includes
+## V2 learning paths
 
-- A 16-question diagnostic across eight skills
-- An explainable mastery score for every skill
-- Adaptive practice that prioritizes weak and under-tested topics
-- Confidence-aware attempt tracking
-- A dashboard with strengths, weaknesses and a readiness index
-- A CSV lab that profiles missing values, duplicates, types and cardinality
-- Safe cleaning operations and a cleaned-CSV download
-- SQLite persistence for multiple named learners
-- 32 reviewed questions with explanations
-
-## Demo users
-
-| User | Password | Initial learning path |
+| Learner | Password | Learning path |
 |---|---|---|
-| Ashutosh | `Ashutosh` | Financial data |
-| Aakash | `Aakash` | Data analysis |
-| Neeraj | `Neeraj` | Business reporting |
+| Ashutosh | `Ashutosh` | Pandas & Data Cleaning |
+| Aakash | `Aakash` | Terraform Foundations |
+| Neeraj | `Neeraj` | Capital Markets |
 
-Progress is stored independently for each user. Their diagnostic answers—not the initial path label—drive their personal mastery map and adaptive practice queue.
+These are demonstration credentials. Replace them with proper authentication before allowing untrusted public access.
 
-These are deliberately simple demonstration credentials. Before publishing the app to untrusted users, replace them with a real authentication provider and never store plain-text passwords in source code.
+## What changed from V1
 
-V1 intentionally has no AI API dependency. The recommendation logic is visible in `engine.py`, making it easier to understand and test before adding an AI tutor.
+- Separate subject, skill map and question bank for each learner
+- 54 readable questions: 18 per learning path
+- 12-question diagnostic for every path
+- Minimal white, blue and violet interface
+- Animated mastery bars
+- Clickable five-question recommended session on the dashboard
+- Immediate before/after readiness recalculation when practice is completed
+- CSV Lab removed
+- Track-aware SQLite persistence prevents subjects from affecting one another
+- No external API key required
 
 ## Project structure
 
 ```text
-pandas-gapmap-v1/
-├── app.py            # Streamlit pages and interface
-├── engine.py         # Mastery and adaptive-practice rules
-├── questions.py      # Tagged question bank
-├── storage.py        # SQLite persistence
+skillgap-v2/
+├── app.py
+├── engine.py
+├── questions.py
+├── storage.py
+├── requirements.txt
 ├── tests/
 │   └── test_engine.py
-├── requirements.txt
 └── README.md
 ```
 
@@ -64,31 +61,59 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy from GitHub with Streamlit Community Cloud
+Run the included tests:
 
-1. Create a GitHub repository and upload all project files.
-2. Open Streamlit Community Cloud and choose **Create app**.
-3. Select the repository, branch and `app.py` entry point.
-4. Deploy. V1 requires no API secrets.
+```bash
+python -m unittest discover -s tests -v
+```
 
-SQLite files on community hosting may be reset when the application restarts or redeploys. For a durable public beta, replace SQLite with PostgreSQL or Supabase.
+## Replace V1 in an existing GitHub repository
 
-## How personalization works
+1. Download and extract `skillgap-v2.zip`.
+2. In your GitHub repository, delete the old application files: `app.py`, `engine.py`, `questions.py`, `storage.py`, `requirements.txt`, and the old `tests` folder.
+3. Upload the extracted V2 files and folders into the repository root.
+4. Do **not** upload `.data/progress.db`, `.venv`, `__pycache__`, or `.streamlit/secrets.toml`.
+5. Commit directly to your intended branch, or create a V2 branch first if you want V1 preserved.
 
-Every question is tagged by skill and difficulty. Each answer creates an attempt containing correctness, confidence, mode and timestamp. `get_mastery()` calculates a confidence-adjusted score with a neutral prior, and `build_practice_queue()` ranks questions by:
+Recommended preservation workflow:
 
-1. Lowest skill mastery
-2. Whether the question is unseen
-3. Question difficulty
+1. On the repository's **Releases** page, confirm the V1 release/tag exists.
+2. Create a branch named `v2` from `main`.
+3. Replace the files on the `v2` branch and test the deployment.
+4. Merge `v2` into `main` after verification.
+5. Create a GitHub release tagged `v2.0.0`.
 
-This is intentionally rules-based. Once real usage data exists, later versions can introduce spaced repetition, item calibration and AI-generated coaching.
+## Deploy with Streamlit Community Cloud
 
-## Sensible V2 additions
+### Existing app
 
-- PostgreSQL and authenticated accounts
-- Short code-writing exercises in a sandbox
-- AI hints that do not reveal the answer immediately
-- A daily learning plan and spaced repetition
-- More question variants and real-world datasets
-- Goal-specific paths for financial analysis and business reporting
-- Admin tools for reviewing questions and user feedback
+If the Streamlit app already points to this repository and `app.py`, a push to its configured branch normally triggers a redeploy automatically.
+
+1. Open the app in Streamlit Community Cloud.
+2. Open **Manage app** and confirm the repository, branch, and entry point are correct.
+3. The entry point must be `app.py`.
+4. Reboot the app if the new commit is not picked up automatically.
+5. Sign in once as each user and confirm that the displayed path is correct.
+
+### New V2 test deployment
+
+1. Open Streamlit Community Cloud and select **Create app**.
+2. Choose the GitHub repository.
+3. Choose the `v2` branch.
+4. Set the main file path to `app.py`.
+5. Deploy and test all three accounts.
+
+## Persistence limitation
+
+The app stores progress in SQLite. On Streamlit Community Cloud, local files can be reset during restart or redeployment. For durable public progress, move the `users` and `attempts` tables to PostgreSQL, Supabase, Neon, or another persistent database.
+
+## How the recommended session works
+
+The engine ranks questions using:
+
+1. Current mastery of the tagged skill
+2. Whether the learner has already seen the question
+3. Whether the question belongs to the diagnostic
+4. Question difficulty
+
+It selects five questions, records each answer, then recalculates the dashboard. A score can rise or be recalibrated downward depending on performance; it is not increased artificially for completion alone.

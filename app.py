@@ -4,400 +4,304 @@ import hmac
 import html
 from pathlib import Path
 
-import pandas as pd
-import plotly.express as px
 import streamlit as st
 
 from engine import (
     SKILL_LABELS,
+    TRACK_LABELS,
     build_practice_queue,
     diagnostic_question_ids,
     get_mastery,
     get_question,
     readiness_summary,
 )
-from storage import (
-    create_or_get_user,
-    get_attempted_question_ids,
-    get_attempts,
-    init_db,
-    record_attempt,
-)
+from storage import create_or_get_user, get_attempted_question_ids, get_attempts, init_db, record_attempt
 
 
 APP_DIR = Path(__file__).parent
 DB_PATH = APP_DIR / ".data" / "progress.db"
-
 DEMO_USERS = {
-    "Ashutosh": {"password": "Ashutosh", "goal": "Financial data"},
-    "Aakash": {"password": "Aakash", "goal": "Data analysis"},
-    "Neeraj": {"password": "Neeraj", "goal": "Business reporting"},
+    "Ashutosh": {"password": "Ashutosh", "track": "pandas"},
+    "Aakash": {"password": "Aakash", "track": "terraform"},
+    "Neeraj": {"password": "Neeraj", "track": "capital_markets"},
 }
 
-st.set_page_config(
-    page_title="Pandas GapMap",
-    page_icon="🧭",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+st.set_page_config(page_title="SkillGap", page_icon="✦", layout="wide", initial_sidebar_state="expanded")
 
 
 def inject_css() -> None:
     st.markdown(
         """
         <style>
-        .stApp {background: #f5f7fb;}
-        [data-testid="stSidebar"] {background: #101828;}
-        [data-testid="stSidebar"] * {color: #f8fafc;}
-        .hero {
-            padding: 2.2rem 2.4rem; border-radius: 24px;
-            color: white; margin-bottom: 1.2rem;
-            background: linear-gradient(125deg, #14213d 0%, #264653 55%, #2a9d8f 100%);
-            box-shadow: 0 16px 40px rgba(16, 24, 40, .16);
-        }
-        .hero h1 {font-size: 2.45rem; margin: 0 0 .45rem;}
-        .hero p {font-size: 1.05rem; opacity: .9; margin: 0; max-width: 760px;}
-        .question-card, .soft-card {
-            background: white; border: 1px solid #e4e7ec; border-radius: 18px;
-            padding: 1.3rem 1.45rem; box-shadow: 0 5px 18px rgba(16,24,40,.05);
-        }
-        .eyebrow {color: #087f73; font-weight: 750; letter-spacing: .08em; font-size: .76rem;}
-        .codebox {
-            background: #101828; color: #e6edf3; border-radius: 12px;
-            padding: 1rem 1.1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            white-space: pre-wrap; margin: .8rem 0;
-        }
-        .skill-pill {display:inline-block; background:#e8f7f4; color:#087f73; border-radius:999px;
-            padding:.28rem .7rem; font-size:.8rem; font-weight:700; margin-bottom:.65rem;}
-        div[data-testid="stMetric"] {background:white; border:1px solid #e4e7ec; padding:1rem;
-            border-radius:16px; box-shadow:0 4px 14px rgba(16,24,40,.04);}
-        .small-note {color:#667085; font-size:.88rem;}
+        :root {--blue:#2563eb; --violet:#7c3aed; --ink:#172033; --muted:#667085; --line:#e7eaf2;}
+        .stApp {background:linear-gradient(180deg,#f8faff 0%,#ffffff 48%); color:var(--ink);}
+        [data-testid="stSidebar"] {background:#11152a;}
+        [data-testid="stSidebar"] * {color:#f8f9ff;}
+        .block-container {max-width:1080px; padding-top:2rem;}
+        .hero {padding:2.5rem; border:1px solid #dfe4ff; border-radius:26px; margin-bottom:1.4rem;
+          background:radial-gradient(circle at 88% 20%,rgba(124,58,237,.18),transparent 28%),
+                     linear-gradient(135deg,#ffffff,#f3f5ff); box-shadow:0 18px 50px rgba(57,48,135,.09);}
+        .hero h1 {font-size:2.65rem; letter-spacing:-.045em; color:#151932; margin:.15rem 0 .5rem;}
+        .hero p {color:#586174; font-size:1.06rem; max-width:720px; margin:0; line-height:1.65;}
+        .eyebrow {font-size:.74rem; letter-spacing:.13em; font-weight:800; color:var(--violet);}
+        .question-card {background:white; border:1px solid var(--line); border-radius:20px;
+          padding:1.5rem; box-shadow:0 10px 32px rgba(39,45,87,.07); margin:.8rem 0 1rem;}
+        .skill-pill {display:inline-block; padding:.32rem .72rem; border-radius:999px;
+          background:#eef2ff; color:#5145cd; font-size:.78rem; font-weight:750;}
+        .question-context {color:#59637a; font-size:.98rem; line-height:1.6; margin:.75rem 0;}
+        .codebox {background:#171a31; color:#f3f4ff; border-radius:13px; padding:1rem 1.1rem;
+          font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap; margin:.9rem 0;}
+        .metric-card {background:white; border:1px solid var(--line); border-radius:18px;
+          padding:1.1rem 1.2rem; min-height:118px; box-shadow:0 7px 22px rgba(37,50,105,.05);}
+        .metric-label {font-size:.75rem; color:#7a8499; text-transform:uppercase; letter-spacing:.08em; font-weight:700;}
+        .metric-value {font-size:1.65rem; font-weight:780; color:#19213a; margin-top:.45rem; line-height:1.15;}
+        .map-shell {background:white; border:1px solid var(--line); border-radius:22px; padding:1.5rem 1.6rem;
+          box-shadow:0 10px 32px rgba(37,50,105,.055); margin:1.2rem 0;}
+        .skill-row {margin:0 0 1.18rem;}
+        .skill-head {display:flex; justify-content:space-between; gap:1rem; margin-bottom:.45rem;
+          color:#26304a; font-size:.93rem; font-weight:650;}
+        .skill-score {color:#5e6680; font-variant-numeric:tabular-nums;}
+        .bar-track {height:10px; background:#eef0f7; border-radius:999px; overflow:hidden;}
+        .bar-fill {height:100%; border-radius:999px; width:var(--score);
+          background:linear-gradient(90deg,#2563eb 0%,#5b5ce2 52%,#8b5cf6 100%);
+          animation:growBar 1.15s cubic-bezier(.2,.75,.25,1) both;}
+        @keyframes growBar {from{width:0} to{width:var(--score)}}
+        .practice-card {border-radius:22px; padding:1.5rem 1.6rem; color:white;
+          background:linear-gradient(125deg,#2457d6 0%,#6545d8 56%,#803ed1 100%);
+          box-shadow:0 16px 38px rgba(85,65,201,.2); margin-top:1.2rem;}
+        .practice-card h3 {margin:.2rem 0 .45rem; color:white;}
+        .practice-card p {margin:0; color:#ebeaff; line-height:1.55;}
+        div[data-testid="stMetric"] {background:white; border:1px solid var(--line); border-radius:17px; padding:1rem;}
+        .stButton > button[kind="primary"] {background:linear-gradient(90deg,#2563eb,#7c3aed); border:0;}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
-def reset_question_state() -> None:
+def render_hero() -> None:
+    st.markdown(
+        """<div class="hero"><div class="eyebrow">PERSONALIZED LEARNING</div>
+        <h1>SkillGap</h1><p>One focused learning path for each person. Diagnose what is weak, practise what matters, and watch the skill map respond.</p></div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def clear_question_state() -> None:
     st.session_state.pop("active_question_id", None)
     st.session_state.pop("feedback", None)
 
 
-def render_hero() -> None:
-    st.markdown(
-        """
-        <div class="hero">
-          <div class="eyebrow" style="color:#b9f5e9">PERSONALIZED PANDAS PRACTICE</div>
-          <h1>Pandas GapMap</h1>
-          <p>Find the data-cleaning concepts you have not fully mastered, then practise the right skill next.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def begin_practice() -> None:
+    track = st.session_state.track
+    attempts = get_attempts(DB_PATH, st.session_state.user_id, track)
+    mastery = get_mastery(attempts, track)
+    st.session_state.practice_queue = build_practice_queue(track, attempts, mastery, count=5)
+    st.session_state.practice_index = 0
+    st.session_state.practice_correct = 0
+    st.session_state.readiness_before = readiness_summary(mastery)["readiness"]
+    st.session_state.session_complete = False
+    st.session_state.page = "Practice"
+    clear_question_state()
 
 
 def render_question(question: dict, mode: str) -> None:
-    feedback = st.session_state.get("feedback")
-    st.markdown(
-        f'<span class="skill-pill">{html.escape(SKILL_LABELS[question["skill"]])}</span>',
-        unsafe_allow_html=True,
-    )
-    st.subheader(question["prompt"])
+    label = SKILL_LABELS[st.session_state.track][question["skill"]]
+    st.markdown(f'<span class="skill-pill">{html.escape(label)}</span>', unsafe_allow_html=True)
+    if question.get("context"):
+        st.markdown(f'<div class="question-context">{html.escape(question["context"])}</div>', unsafe_allow_html=True)
+    st.markdown(f"### {question['prompt']}")
     if question.get("code"):
-        st.markdown(
-            f'<div class="codebox">{html.escape(question["code"])}</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="codebox">{html.escape(question["code"])}</div>', unsafe_allow_html=True)
 
+    feedback = st.session_state.get("feedback")
     if feedback and feedback["question_id"] == question["id"]:
         if feedback["correct"]:
-            st.success("Correct — your mastery estimate has been updated.")
+            st.success("Correct — this answer now contributes to your mastery score.")
         else:
-            correct_text = question["options"][question["answer"]]
-            st.error(f"Not quite. Correct answer: {correct_text}")
+            st.error(f"Correct answer: {question['options'][question['answer']]}")
         st.info(question["explanation"])
-        if st.button("Next question →", type="primary", use_container_width=True):
-            reset_question_state()
+        if st.button("Continue →", type="primary", use_container_width=True):
+            if mode == "practice":
+                st.session_state.practice_index += 1
+                if st.session_state.practice_index >= len(st.session_state.practice_queue):
+                    st.session_state.session_complete = True
+            clear_question_state()
             st.rerun()
         return
 
-    with st.form(f"question_form_{question['id']}"):
-        choice = st.radio(
-            "Choose one answer",
-            options=list(question["options"].keys()),
-            format_func=lambda key: question["options"][key],
-            index=None,
-        )
-        confidence = st.select_slider(
-            "How confident are you?",
-            options=["Guessing", "Unsure", "Fairly sure", "Certain"],
-            value="Fairly sure",
-        )
+    with st.form(f"answer_{question['id']}_{mode}"):
+        answer = st.radio("Choose one answer", list(question["options"]),
+                          format_func=lambda key: question["options"][key], index=None)
+        confidence = st.select_slider("Confidence", ["Guessing", "Unsure", "Fairly sure", "Certain"], value="Fairly sure")
         submitted = st.form_submit_button("Check answer", type="primary", use_container_width=True)
-
     if submitted:
-        if choice is None:
-            st.warning("Select an answer before submitting.")
+        if answer is None:
+            st.warning("Choose an answer before submitting.")
             return
-        correct = choice == question["answer"]
-        record_attempt(
-            DB_PATH,
-            user_id=st.session_state.user_id,
-            question_id=question["id"],
-            skill=question["skill"],
-            correct=correct,
-            confidence=confidence,
-            mode=mode,
-        )
-        st.session_state.feedback = {
-            "question_id": question["id"],
-            "correct": correct,
-        }
+        correct = answer == question["answer"]
+        record_attempt(DB_PATH, st.session_state.user_id, question["id"], st.session_state.track,
+                       question["skill"], correct, confidence, mode)
+        if mode == "practice" and correct:
+            st.session_state.practice_correct += 1
+        st.session_state.feedback = {"question_id": question["id"], "correct": correct}
         st.rerun()
 
 
 def diagnostic_page() -> None:
-    st.title("Diagnostic assessment")
-    st.caption("16 questions · approximately 10 minutes · one pass is enough for V1")
-    all_ids = diagnostic_question_ids()
-    attempted = get_attempted_question_ids(DB_PATH, st.session_state.user_id, mode="diagnostic")
-    remaining = [qid for qid in all_ids if qid not in attempted]
-    progress = (len(all_ids) - len(remaining)) / len(all_ids)
-    st.progress(progress, text=f"{len(all_ids) - len(remaining)} of {len(all_ids)} completed")
-
+    track = st.session_state.track
+    st.title("Diagnostic")
+    st.caption(f"12 readable questions across the six skills in {TRACK_LABELS[track]}.")
+    question_ids = diagnostic_question_ids(track)
+    attempted = get_attempted_question_ids(DB_PATH, st.session_state.user_id, track, "diagnostic")
+    remaining = [qid for qid in question_ids if qid not in attempted]
+    st.progress((len(question_ids) - len(remaining)) / len(question_ids),
+                text=f"{len(question_ids) - len(remaining)} of {len(question_ids)} complete")
     if not remaining:
-        st.success("Diagnostic complete. Your first personalised skill map is ready.")
-        if st.button("Open my dashboard", type="primary"):
-            reset_question_state()
+        st.success("Diagnostic complete. Your dashboard is ready.")
+        if st.button("View skill map", type="primary"):
             st.session_state.page = "Dashboard"
+            clear_question_state()
             st.rerun()
         return
-
-    if "active_question_id" not in st.session_state:
+    if st.session_state.get("active_question_id") not in remaining:
         st.session_state.active_question_id = remaining[0]
     render_question(get_question(st.session_state.active_question_id), "diagnostic")
 
 
-def practice_page() -> None:
-    st.title("Adaptive practice")
-    attempts = get_attempts(DB_PATH, st.session_state.user_id)
-    mastery = get_mastery(attempts)
-    queue = build_practice_queue(attempts, mastery, count=10)
-
-    if not queue:
-        st.info("Complete the diagnostic to unlock your personalised practice queue.")
-        return
-
-    weakest = min(mastery, key=lambda skill: mastery[skill]["score"])
-    st.caption(
-        f"Today’s queue prioritises **{SKILL_LABELS[weakest]}**, currently your lowest-confidence skill."
-    )
-
-    if "active_question_id" not in st.session_state or st.session_state.active_question_id not in queue:
-        st.session_state.active_question_id = queue[0]
-    render_question(get_question(st.session_state.active_question_id), "practice")
+def skill_map_html(mastery: dict, track: str) -> str:
+    rows = []
+    for skill, values in mastery.items():
+        score = max(0.0, min(100.0, float(values["score"])))
+        rows.append(
+            f"""<div class="skill-row"><div class="skill-head">
+            <span>{html.escape(SKILL_LABELS[track][skill])}</span>
+            <span class="skill-score">{score:.0f}% · {values['attempts']} attempts</span></div>
+            <div class="bar-track"><div class="bar-fill" style="--score:{score}%"></div></div></div>"""
+        )
+    return '<div class="map-shell"><div class="eyebrow">MASTERY BY SKILL</div><br>' + "".join(rows) + "</div>"
 
 
 def dashboard_page() -> None:
-    st.title("Your skill map")
-    attempts = get_attempts(DB_PATH, st.session_state.user_id)
-    mastery = get_mastery(attempts)
+    track = st.session_state.track
+    attempts = get_attempts(DB_PATH, st.session_state.user_id, track)
+    mastery = get_mastery(attempts, track)
     summary = readiness_summary(mastery)
+    labels = SKILL_LABELS[track]
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Readiness index", f"{summary['readiness']}%")
-    c2.metric("Questions answered", len(attempts))
-    c3.metric("Strongest skill", SKILL_LABELS[summary["strongest"]])
-    c4.metric("Focus next", SKILL_LABELS[summary["weakest"]])
+    st.title(f"{st.session_state.user_name}'s skill map")
+    st.caption(TRACK_LABELS[track])
+    metrics = [
+        ("Readiness index", f"{summary['readiness']}%"),
+        ("Questions answered", str(len(attempts))),
+        ("Strongest", labels[summary["strongest"]]),
+        ("Focus next", labels[summary["weakest"]]),
+    ]
+    columns = st.columns(4)
+    for column, (label, value) in zip(columns, metrics):
+        column.markdown(f'<div class="metric-card"><div class="metric-label">{html.escape(label)}</div><div class="metric-value">{html.escape(value)}</div></div>', unsafe_allow_html=True)
 
-    chart_df = pd.DataFrame(
-        [
-            {
-                "Skill": SKILL_LABELS[skill],
-                "Mastery": values["score"],
-                "Attempts": values["attempts"],
-            }
-            for skill, values in mastery.items()
-        ]
-    ).sort_values("Mastery")
-    fig = px.bar(
-        chart_df,
-        x="Mastery",
-        y="Skill",
-        orientation="h",
-        color="Mastery",
-        color_continuous_scale=["#d92d20", "#fdb022", "#12b76a"],
-        range_color=[0, 100],
-        text="Mastery",
+    st.markdown(skill_map_html(mastery, track), unsafe_allow_html=True)
+    focus = labels[summary["weakest"]]
+    st.markdown(
+        f"""<div class="practice-card"><div class="eyebrow" style="color:#d9dcff">RECOMMENDED SESSION</div>
+        <h3>Strengthen {html.escape(focus)}</h3>
+        <p>Five questions selected from your weakest and least-tested areas. Your skill map recalculates when the session is complete.</p></div>""",
+        unsafe_allow_html=True,
     )
-    fig.update_traces(texttemplate="%{text:.0f}%", textposition="outside")
-    fig.update_layout(
-        height=470,
-        margin=dict(l=10, r=30, t=20, b=10),
-        coloraxis_showscale=False,
-        xaxis_title="Estimated mastery (%)",
-        yaxis_title=None,
-        plot_bgcolor="white",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.subheader("Recommended next step")
-    st.info(
-        f"Practise **{SKILL_LABELS[summary['weakest']]}** next. "
-        "The recommendation changes automatically as you answer more questions."
-    )
-    st.caption(
-        "V1 mastery is an explainable practice indicator based on correctness, confidence and repeated attempts—not a certification or employment score."
-    )
+    if st.button("Start recommended practice →", type="primary", use_container_width=True):
+        begin_practice()
+        st.rerun()
+    st.caption("The readiness index is a learning-progress indicator, not a certification or employment score.")
 
 
-def cleaning_lab_page() -> None:
-    st.title("CSV cleaning lab")
-    st.write("Upload a CSV to profile common quality problems and create a cleaned copy.")
-    uploaded = st.file_uploader("Upload a CSV file", type=["csv"])
-    if uploaded is None:
-        st.markdown(
-            '<div class="soft-card">Your file stays within the running app session. V1 does not save uploaded datasets.</div>',
-            unsafe_allow_html=True,
-        )
+def practice_page() -> None:
+    st.title("Recommended practice")
+    if not st.session_state.get("practice_queue"):
+        st.info("Start a recommended session from your dashboard.")
+        if st.button("Return to dashboard"):
+            st.session_state.page = "Dashboard"
+            st.rerun()
         return
 
-    try:
-        df = pd.read_csv(uploaded)
-    except Exception as exc:
-        st.error(f"Pandas could not read this file: {exc}")
+    if st.session_state.get("session_complete"):
+        attempts = get_attempts(DB_PATH, st.session_state.user_id, st.session_state.track)
+        new_score = readiness_summary(get_mastery(attempts, st.session_state.track))["readiness"]
+        old_score = st.session_state.readiness_before
+        delta = new_score - old_score
+        st.success(f"Session complete: {st.session_state.practice_correct}/5 correct.")
+        a, b, c = st.columns(3)
+        a.metric("Before", f"{old_score}%")
+        b.metric("Now", f"{new_score}%")
+        c.metric("Change", f"{delta:+d} points")
+        st.write("Your dashboard has been recalculated using these five new attempts.")
+        if st.button("See updated skill map", type="primary", use_container_width=True):
+            for key in ["practice_queue", "practice_index", "practice_correct", "readiness_before", "session_complete"]:
+                st.session_state.pop(key, None)
+            st.session_state.page = "Dashboard"
+            st.rerun()
         return
 
-    duplicate_count = int(df.duplicated().sum())
-    missing_count = int(df.isna().sum().sum())
-    text_columns = list(df.select_dtypes(include="object").columns)
-    numeric_columns = list(df.select_dtypes(include="number").columns)
-
-    a, b, c, d = st.columns(4)
-    a.metric("Rows", f"{len(df):,}")
-    b.metric("Columns", len(df.columns))
-    c.metric("Missing cells", f"{missing_count:,}")
-    d.metric("Duplicate rows", f"{duplicate_count:,}")
-
-    with st.expander("Column quality report", expanded=True):
-        report = pd.DataFrame(
-            {
-                "dtype": df.dtypes.astype(str),
-                "missing": df.isna().sum(),
-                "missing_%": (df.isna().mean() * 100).round(1),
-                "unique": df.nunique(dropna=True),
-            }
-        )
-        st.dataframe(report, use_container_width=True)
-
-    st.subheader("Build a cleaned copy")
-    remove_duplicates = st.checkbox("Remove duplicate rows", value=True)
-    strip_text = st.checkbox("Strip leading/trailing whitespace from text columns", value=True)
-    drop_empty = st.checkbox("Drop completely empty rows and columns", value=True)
-
-    cleaned = df.copy()
-    operations: list[str] = []
-    if drop_empty:
-        cleaned = cleaned.dropna(axis=0, how="all").dropna(axis=1, how="all")
-        operations.append("Dropped completely empty rows and columns")
-    if remove_duplicates:
-        before = len(cleaned)
-        cleaned = cleaned.drop_duplicates()
-        operations.append(f"Removed {before - len(cleaned)} duplicate rows")
-    if strip_text:
-        for column in cleaned.select_dtypes(include="object").columns:
-            cleaned[column] = cleaned[column].apply(lambda value: value.strip() if isinstance(value, str) else value)
-        operations.append(f"Trimmed whitespace in {len(text_columns)} text columns")
-
-    st.dataframe(cleaned.head(25), use_container_width=True)
-    st.caption(" · ".join(operations) if operations else "No cleaning operations selected")
-    st.download_button(
-        "Download cleaned CSV",
-        cleaned.to_csv(index=False).encode("utf-8"),
-        file_name="cleaned_data.csv",
-        mime="text/csv",
-        type="primary",
-    )
-    if numeric_columns:
-        st.caption(f"Numeric columns detected: {', '.join(numeric_columns[:8])}")
+    index = st.session_state.practice_index
+    queue = st.session_state.practice_queue
+    st.progress(index / len(queue), text=f"Question {index + 1} of {len(queue)}")
+    render_question(get_question(queue[index]), "practice")
 
 
 def login_page() -> None:
     render_hero()
-    left, right = st.columns([1.35, 1])
+    left, right = st.columns([1.25, 1])
     with left:
-        st.subheader("Learn by finding the gaps")
-        st.write(
-            "This beta does not force you through a linear Pandas course. It measures eight practical "
-            "data-cleaning skills, identifies weaker areas, and changes your practice queue accordingly."
-        )
-        st.markdown(
-            """
-            - Take a short diagnostic
-            - See mastery by skill
-            - Practise weak concepts first
-            - Audit and clean a real CSV
-            """
-        )
+        st.subheader("Three people. Three learning paths.")
+        st.markdown("**Ashutosh** · Pandas & Data Cleaning  \n**Aakash** · Terraform Foundations  \n**Neeraj** · Capital Markets")
+        st.write("Each learner receives an independent diagnostic, mastery map and recommended practice queue.")
     with right:
-        with st.form("login_form"):
-            st.subheader("Sign in")
+        with st.form("login"):
             name = st.selectbox("Learner", list(DEMO_USERS))
             password = st.text_input("Password", type="password")
-            start = st.form_submit_button("Enter GapMap →", type="primary", use_container_width=True)
-        st.caption("Demo access: each learner’s password is the same as their displayed name.")
-        if start:
-            expected = DEMO_USERS[name]["password"]
-            if not hmac.compare_digest(password, expected):
+            submitted = st.form_submit_button("Sign in →", type="primary", use_container_width=True)
+        st.caption("Demo password: the learner's displayed name.")
+        if submitted:
+            profile = DEMO_USERS[name]
+            if not hmac.compare_digest(password, profile["password"]):
                 st.error("Incorrect password.")
             else:
-                goal = DEMO_USERS[name]["goal"]
-                user_id = create_or_get_user(DB_PATH, name, goal)
-                st.session_state.user_id = user_id
+                st.session_state.user_id = create_or_get_user(DB_PATH, name, profile["track"])
                 st.session_state.user_name = name
-                st.session_state.user_goal = goal
-                st.session_state.page = "Diagnostic"
+                st.session_state.track = profile["track"]
+                st.session_state.page = "Dashboard"
                 st.rerun()
 
 
 def main() -> None:
     init_db(DB_PATH)
     inject_css()
-
     if "user_id" not in st.session_state:
         login_page()
         return
 
     with st.sidebar:
-        st.markdown("## 🧭 GapMap")
-        st.caption(f"Learning as {st.session_state.user_name}")
-        st.caption(f"Path: {st.session_state.user_goal}")
-        pages = ["Diagnostic", "Practice", "Dashboard", "CSV Lab"]
-        selected = st.radio(
-            "Navigate",
-            pages,
-            index=pages.index(st.session_state.get("page", "Diagnostic")),
-            label_visibility="collapsed",
-        )
+        st.markdown("## ✦ SkillGap")
+        st.caption(st.session_state.user_name)
+        st.caption(TRACK_LABELS[st.session_state.track])
+        pages = ["Dashboard", "Diagnostic", "Practice"]
+        selected = st.radio("Navigate", pages, index=pages.index(st.session_state.get("page", "Dashboard")), label_visibility="collapsed")
         if selected != st.session_state.get("page"):
             st.session_state.page = selected
-            reset_question_state()
+            clear_question_state()
             st.rerun()
         st.divider()
         if st.button("Sign out", use_container_width=True):
             st.session_state.clear()
             st.rerun()
 
-    page = st.session_state.get("page", "Diagnostic")
-    if page == "Diagnostic":
-        diagnostic_page()
-    elif page == "Practice":
-        practice_page()
-    elif page == "Dashboard":
+    page = st.session_state.get("page", "Dashboard")
+    if page == "Dashboard":
         dashboard_page()
+    elif page == "Diagnostic":
+        diagnostic_page()
     else:
-        cleaning_lab_page()
+        practice_page()
 
 
 if __name__ == "__main__":
